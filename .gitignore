@@ -1,0 +1,29 @@
+# Binaries
+/bin/
+/dist/
+/db-backup
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test & coverage
+*.test
+*.out
+coverage.html
+
+# Backup output
+/backups/
+
+# Environment / secrets
+.env
+.env.*
+
+# Go workspace
+go.work
+go.work.sum
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
