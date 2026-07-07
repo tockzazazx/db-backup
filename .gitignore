@@ -2,6 +2,7 @@
 /bin/
 /dist/
 /db-backup
+/boxdb
 *.exe
 *.dll
 *.so
