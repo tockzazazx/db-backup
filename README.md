@@ -37,11 +37,11 @@ boxdb run         # run a backup
 
 ## S3 Configuration
 
-Save S3 credentials (stored as `boxdb.json` next to the binary, mode 0600 —
-use `sudo` when the binary lives in `/usr/bin` or `/usr/local/bin`):
+Save S3 credentials (stored per-user at `~/.config/boxdb/config.json`,
+mode 0600 — no sudo needed):
 
 ```sh
-sudo boxdb config \
+boxdb config \
   --endpoint https://s3.example.com \
   --access AKIA... \
   --secret secret... \

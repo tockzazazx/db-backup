@@ -21,16 +21,14 @@ type S3 struct {
 	UseSSL    bool   `json:"use_ssl"`
 }
 
-// S3ConfigPath returns the config file location: boxdb.json next to the binary.
+// S3ConfigPath returns the per-user config file location following the XDG
+// convention: ~/.config/boxdb/config.json on Linux (respects XDG_CONFIG_HOME).
 func S3ConfigPath() (string, error) {
-	exe, err := os.Executable()
+	dir, err := os.UserConfigDir()
 	if err != nil {
-		return "", fmt.Errorf("locate executable: %w", err)
+		return "", fmt.Errorf("locate user config dir: %w", err)
 	}
-	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
-		exe = resolved
-	}
-	return filepath.Join(filepath.Dir(exe), "boxdb.json"), nil
+	return filepath.Join(dir, "boxdb", "config.json"), nil
 }
 
 // LoadS3 reads the S3 config from disk. Returns ErrNoConfig if absent.
@@ -63,6 +61,9 @@ func (s *S3) Save() (string, error) {
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return "", err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return "", fmt.Errorf("create config dir: %w", err)
 	}
 	if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
 		return "", fmt.Errorf("write config: %w", err)
