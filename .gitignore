@@ -19,6 +19,7 @@ coverage.html
 # Environment / secrets
 .env
 .env.*
+boxdb.json
 
 # Go workspace
 go.work

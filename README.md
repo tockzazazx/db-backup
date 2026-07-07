@@ -30,12 +30,43 @@ boxdb --version
 
 ```sh
 boxdb --version   # print version
+boxdb config      # show saved S3 config
+boxdb test        # test the S3 connection
 boxdb run         # run a backup
 ```
 
-## Configuration
+## S3 Configuration
 
-Configuration is read from environment variables:
+Save S3 credentials (stored as `boxdb.json` next to the binary, mode 0600 —
+use `sudo` when the binary lives in `/usr/bin` or `/usr/local/bin`):
+
+```sh
+sudo boxdb config \
+  --endpoint https://s3.example.com \
+  --access AKIA... \
+  --secret secret... \
+  --bucket my-backups
+```
+
+`--endpoint` accepts `host:port` or a URL; an `https://` scheme implies TLS
+(or pass `--ssl` explicitly). Run `boxdb config` with no flags to view the
+saved config (secret masked), and pass only the flags you want to change to
+update individual fields.
+
+Test connectivity (uses the [MinIO Go client](https://github.com/minio/minio-go)):
+
+```sh
+boxdb test
+# connecting to s3.example.com (bucket "my-backups", ssl=true)...
+# OK: connection successful, bucket is accessible
+```
+
+Errors are reported for missing config, unreachable endpoints, bad
+credentials, and missing buckets.
+
+## Backup Configuration
+
+Read from environment variables:
 
 | Variable            | Description                          | Default                                |
 |---------------------|--------------------------------------|----------------------------------------|
