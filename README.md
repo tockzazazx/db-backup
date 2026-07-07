@@ -45,13 +45,20 @@ boxdb config \
   --endpoint https://s3.example.com \
   --access AKIA... \
   --secret secret... \
-  --bucket my-backups
+  --bucket my-backups \
+  --folder ubuntu-server-01 \
+  --paths /var/backups,/opt/data
 ```
 
-`--endpoint` accepts `host:port` or a URL; an `https://` scheme implies TLS
-(or pass `--ssl` explicitly). Run `boxdb config` with no flags to view the
-saved config (secret masked), and pass only the flags you want to change to
-update individual fields.
+- `--endpoint` accepts `host:port` or a URL; an `https://` scheme implies TLS
+  (or pass `--ssl` explicitly).
+- `--folder` is the folder (object prefix) inside the bucket where this
+  machine's files are uploaded. It is created automatically if missing.
+- `--paths` is a comma-separated list of local directories whose files will
+  be uploaded into that folder.
+
+Run `boxdb config` with no flags to view the saved config (secret masked),
+and pass only the flags you want to change to update individual fields.
 
 Test connectivity (uses the [MinIO Go client](https://github.com/minio/minio-go)):
 
@@ -59,10 +66,13 @@ Test connectivity (uses the [MinIO Go client](https://github.com/minio/minio-go)
 boxdb test
 # connecting to s3.example.com (bucket "my-backups", ssl=true)...
 # OK: connection successful, bucket is accessible
+# OK: folder "ubuntu-server-01" created in bucket
+# OK: local path /var/backups
 ```
 
-Errors are reported for missing config, unreachable endpoints, bad
-credentials, and missing buckets.
+`boxdb test` also creates the configured folder when missing and warns about
+local paths that don't exist. Errors are reported for missing config,
+unreachable endpoints, bad credentials, and missing buckets.
 
 ## Backup Configuration
 

@@ -57,8 +57,10 @@ func configCmd(args []string) error {
 	secret := fs.String("secret", "", "S3 secret key")
 	bucket := fs.String("bucket", "", "S3 bucket name")
 	ssl := fs.Bool("ssl", false, "use TLS (auto-detected when endpoint has an http:// or https:// scheme)")
+	folder := fs.String("folder", "", "folder (prefix) in the bucket for this machine's files, e.g. ubuntu-server-01")
+	paths := fs.String("paths", "", "comma-separated local directories to upload, e.g. /var/backups,/opt/data")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: boxdb config --endpoint <host:port> --access <key> --secret <key> --bucket <name> [--ssl]")
+		fmt.Fprintln(os.Stderr, "Usage: boxdb config --endpoint <host:port> --access <key> --secret <key> --bucket <name> [--ssl] [--folder <name>] [--paths <dir,dir>]")
 		fmt.Fprintln(os.Stderr, "       boxdb config          (show current config)")
 		fs.PrintDefaults()
 	}
@@ -95,6 +97,12 @@ func configCmd(args []string) error {
 	if *bucket != "" {
 		cfg.Bucket = *bucket
 	}
+	if *folder != "" {
+		cfg.Folder = strings.Trim(*folder, "/")
+	}
+	if *paths != "" {
+		cfg.Paths = splitPaths(*paths)
+	}
 
 	path, err := cfg.Save()
 	if err != nil {
@@ -116,6 +124,8 @@ func showConfig() error {
 	fmt.Println("  secret   :", maskSecret(cfg.SecretKey))
 	fmt.Println("  bucket   :", valueOr(cfg.Bucket, "(not set)"))
 	fmt.Println("  ssl      :", cfg.UseSSL)
+	fmt.Println("  folder   :", valueOr(cfg.Folder, "(not set)"))
+	fmt.Println("  paths    :", valueOr(strings.Join(cfg.Paths, ", "), "(not set)"))
 	return nil
 }
 
@@ -140,7 +150,42 @@ func testCmd() error {
 		return err
 	}
 	fmt.Println("OK: connection successful, bucket is accessible")
+
+	if cfg.Folder != "" {
+		created, err := s3.EnsureFolder(ctx, cfg)
+		if err != nil {
+			return err
+		}
+		if created {
+			fmt.Printf("OK: folder %q created in bucket\n", cfg.Folder)
+		} else {
+			fmt.Printf("OK: folder %q already exists\n", cfg.Folder)
+		}
+	}
+
+	for _, p := range cfg.Paths {
+		info, err := os.Stat(p)
+		switch {
+		case err != nil:
+			fmt.Printf("WARN: local path %s is not accessible: %v\n", p, err)
+		case !info.IsDir():
+			fmt.Printf("WARN: local path %s is not a directory\n", p)
+		default:
+			fmt.Printf("OK: local path %s\n", p)
+		}
+	}
 	return nil
+}
+
+// splitPaths parses a comma-separated list of directories, dropping blanks.
+func splitPaths(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func runCmd() error {
@@ -206,5 +251,7 @@ Config flags:
   --access <key>          access key
   --secret <key>          secret key
   --bucket <name>         bucket name
-  --ssl                   use TLS`)
+  --ssl                   use TLS
+  --folder <name>         folder (prefix) in the bucket for this machine's files
+  --paths <dir,dir>       comma-separated local directories to upload`)
 }

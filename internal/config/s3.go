@@ -19,6 +19,10 @@ type S3 struct {
 	SecretKey string `json:"secret_key"`
 	Bucket    string `json:"bucket"`
 	UseSSL    bool   `json:"use_ssl"`
+	// Folder is the prefix inside the bucket where this machine's files go.
+	Folder string `json:"folder,omitempty"`
+	// Paths are local directories whose files get uploaded into Folder.
+	Paths []string `json:"paths,omitempty"`
 }
 
 // S3ConfigPath returns the per-user config file location following the XDG
