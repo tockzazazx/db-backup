@@ -32,7 +32,26 @@ boxdb --version
 boxdb --version   # print version
 boxdb config      # show saved S3 config
 boxdb test        # test the S3 connection
+boxdb upload      # upload new files from the configured paths
 boxdb run         # run a backup
+```
+
+## Upload
+
+`boxdb upload` sweeps every directory in `paths` and uploads files into the
+bucket under `<folder>/<upload-date>/`, e.g. `ubuntu-server-01/2026-07-08/db1.pg`.
+
+- Only files that have never been uploaded are sent — a file counts as
+  uploaded when an object with the same name already exists under `folder`,
+  in any date subfolder.
+- Files removed locally are never deleted from the bucket.
+- Subdirectories and dotfiles are skipped.
+
+```sh
+boxdb upload
+# upload: /var/backups/3.pg -> ubuntu-server-01/2026-07-08/3.pg (300.0 KB)
+# skip:   2.pg (already uploaded)
+# done: 1 uploaded, 1 skipped
 ```
 
 ## S3 Configuration
