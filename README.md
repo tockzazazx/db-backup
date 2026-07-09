@@ -64,7 +64,6 @@ boxdb test        # test the S3 connection
 boxdb upload      # upload new files from the configured paths
 boxdb list        # list date folders on S3
 boxdb list <date> # list files in one date folder
-boxdb run         # run a backup
 ```
 
 ## Upload
@@ -134,15 +133,6 @@ boxdb test
 local paths that don't exist. Errors are reported for missing config,
 unreachable endpoints, bad credentials, and missing buckets.
 
-## Backup Configuration
-
-Read from environment variables:
-
-| Variable            | Description                          | Default                                |
-|---------------------|--------------------------------------|----------------------------------------|
-| `DB_URL`            | Connection string of the database    | `postgres://localhost:5432/postgres`   |
-| `BACKUP_OUTPUT_DIR` | Directory where backups are written  | `./backups`                            |
-
 ## Project Structure
 
 ```
@@ -150,8 +140,8 @@ Read from environment variables:
 ├── cmd/
 │   └── boxdb/          # main entrypoint
 ├── internal/
-│   ├── backup/         # core backup logic
-│   └── config/         # configuration loading
+│   ├── config/         # config file handling (~/.config/boxdb/config.json)
+│   └── s3/             # MinIO client wrapper (check, upload, list)
 ├── scripts/
 │   ├── build-deb.sh    # package a .deb from a built binary
 │   └── install.sh      # end-user install script

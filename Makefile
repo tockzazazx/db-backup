@@ -4,7 +4,7 @@ COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 DATE    := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)
 
-.PHONY: build build-linux deb run test lint clean
+.PHONY: build build-linux deb test lint clean
 
 build:
 	go build -ldflags '$(LDFLAGS)' -o bin/$(BINARY) ./cmd/$(BINARY)
@@ -16,9 +16,6 @@ build-linux:
 deb: build-linux
 	./scripts/build-deb.sh amd64 $(VERSION)
 	./scripts/build-deb.sh arm64 $(VERSION)
-
-run:
-	go run ./cmd/$(BINARY) run
 
 test:
 	go test ./...

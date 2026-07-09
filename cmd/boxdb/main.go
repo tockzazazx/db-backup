@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/punnawish/db-backup/internal/backup"
 	"github.com/punnawish/db-backup/internal/config"
 	"github.com/punnawish/db-backup/internal/s3"
 )
@@ -41,8 +40,6 @@ func main() {
 		err = uploadCmd()
 	case "list":
 		err = listCmd(os.Args[2:])
-	case "run":
-		err = runCmd()
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", os.Args[1])
 		usage()
@@ -349,15 +346,6 @@ func splitPaths(s string) []string {
 	return out
 }
 
-func runCmd() error {
-	cfg, err := config.Load()
-	if err != nil {
-		return err
-	}
-	fmt.Printf("boxdb starting (database: %s, output: %s)\n", cfg.DatabaseURL, cfg.OutputDir)
-	return backup.New(cfg.DatabaseURL, cfg.OutputDir).Run(context.Background())
-}
-
 // normalizeEndpoint strips an optional scheme; the scheme wins over the --ssl
 // flag when present, since minio-go expects a bare host:port.
 func normalizeEndpoint(endpoint string, ssl bool) (string, bool) {
@@ -406,7 +394,6 @@ Usage:
   boxdb test            test the S3 connection using the saved config
   boxdb upload          upload new files from the configured paths to S3
   boxdb list [date]     list files in a date folder on S3 (no arg: list date folders)
-  boxdb run             run a backup
   boxdb --version       print version
 
 Config flags:
