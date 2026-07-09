@@ -39,6 +39,8 @@ func main() {
 		err = testCmd()
 	case "upload":
 		err = uploadCmd()
+	case "list":
+		err = listCmd(os.Args[2:])
 	case "run":
 		err = runCmd()
 	default:
@@ -264,6 +266,65 @@ func uploadCmd() error {
 	return nil
 }
 
+// listCmd shows the files stored in one date folder on S3, or the available
+// date folders when called without an argument.
+func listCmd(args []string) error {
+	cfg, err := config.LoadS3()
+	if err != nil {
+		if errors.Is(err, config.ErrNoConfig) {
+			return fmt.Errorf("%v\nconfigure credentials first:\n  boxdb config --endpoint <host:port> --access <key> --secret <key> --bucket <name>", err)
+		}
+		return err
+	}
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	if cfg.Folder == "" {
+		return errors.New("no folder configured — set one with: boxdb config --folder <name>")
+	}
+
+	client, err := s3.New(cfg)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	if len(args) == 0 {
+		folders, err := client.ListDateFolders(ctx)
+		if err != nil {
+			return err
+		}
+		if len(folders) == 0 {
+			fmt.Printf("no date folders under %s/ yet — run: boxdb upload\n", cfg.Folder)
+			return nil
+		}
+		fmt.Printf("date folders under %s/ (pick one: boxdb list <name>):\n", cfg.Folder)
+		for _, f := range folders {
+			fmt.Println(" ", f)
+		}
+		return nil
+	}
+
+	sub := args[0]
+	files, err := client.ListFiles(ctx, sub)
+	if err != nil {
+		return err
+	}
+	if len(files) == 0 {
+		return fmt.Errorf("no files in %s/%s — run boxdb list to see available date folders", cfg.Folder, sub)
+	}
+
+	var total int64
+	fmt.Printf("%s/%s:\n", cfg.Folder, sub)
+	for _, f := range files {
+		fmt.Printf("  %-40s %10s  %s\n", f.Name, humanSize(f.Size), f.LastModified.Local().Format("2006-01-02 15:04:05"))
+		total += f.Size
+	}
+	fmt.Printf("total: %d files, %s\n", len(files), humanSize(total))
+	return nil
+}
+
 func humanSize(n int64) string {
 	const unit = 1024
 	if n < unit {
@@ -344,6 +405,7 @@ Usage:
   boxdb config [flags]  save S3 credentials (no flags: show current config)
   boxdb test            test the S3 connection using the saved config
   boxdb upload          upload new files from the configured paths to S3
+  boxdb list [date]     list files in a date folder on S3 (no arg: list date folders)
   boxdb run             run a backup
   boxdb --version       print version
 

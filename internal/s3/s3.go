@@ -6,7 +6,9 @@ import (
 	"context"
 	"fmt"
 	"path"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -81,6 +83,51 @@ func (c *Client) UploadedNames(ctx context.Context) (map[string]bool, error) {
 		names[path.Base(obj.Key)] = true
 	}
 	return names, nil
+}
+
+// Object describes one stored file.
+type Object struct {
+	Name         string
+	Size         int64
+	LastModified time.Time
+}
+
+// ListFiles returns the files stored under cfg.Folder/<sub>/, sorted by name.
+func (c *Client) ListFiles(ctx context.Context, sub string) ([]Object, error) {
+	prefix := path.Join(strings.Trim(c.cfg.Folder, "/"), strings.Trim(sub, "/")) + "/"
+	var files []Object
+	for obj := range c.mc.ListObjects(ctx, c.cfg.Bucket, minio.ListObjectsOptions{Prefix: prefix, Recursive: true}) {
+		if obj.Err != nil {
+			return nil, fmt.Errorf("list %s: %w", prefix, obj.Err)
+		}
+		if strings.HasSuffix(obj.Key, "/") { // folder marker objects
+			continue
+		}
+		files = append(files, Object{
+			Name:         strings.TrimPrefix(obj.Key, prefix),
+			Size:         obj.Size,
+			LastModified: obj.LastModified,
+		})
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].Name < files[j].Name })
+	return files, nil
+}
+
+// ListDateFolders returns the subfolder names directly under cfg.Folder,
+// sorted ascending (upload dates sort chronologically).
+func (c *Client) ListDateFolders(ctx context.Context) ([]string, error) {
+	prefix := strings.Trim(c.cfg.Folder, "/") + "/"
+	var folders []string
+	for obj := range c.mc.ListObjects(ctx, c.cfg.Bucket, minio.ListObjectsOptions{Prefix: prefix, Recursive: false}) {
+		if obj.Err != nil {
+			return nil, fmt.Errorf("list %s: %w", prefix, obj.Err)
+		}
+		if name := strings.Trim(strings.TrimPrefix(obj.Key, prefix), "/"); name != "" && strings.HasSuffix(obj.Key, "/") {
+			folders = append(folders, name)
+		}
+	}
+	sort.Strings(folders)
+	return folders, nil
 }
 
 // Upload puts a local file into the bucket at key.

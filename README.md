@@ -62,6 +62,8 @@ boxdb --version   # print version
 boxdb config      # show saved S3 config
 boxdb test        # test the S3 connection
 boxdb upload      # upload new files from the configured paths
+boxdb list        # list date folders on S3
+boxdb list <date> # list files in one date folder
 boxdb run         # run a backup
 ```
 
@@ -81,6 +83,16 @@ boxdb upload
 # upload: /var/backups/3.pg -> ubuntu-server-01/2026-07-08/3.pg (300.0 KB)
 # skip:   2.pg (already uploaded)
 # done: 1 uploaded, 1 skipped
+```
+
+Inspect what's stored with `boxdb list`:
+
+```sh
+boxdb list                # show available date folders
+boxdb list 2026-07-08     # show files in that folder
+# ubuntu-server-01/2026-07-08:
+#   3.pg    300.0 KB  2026-07-08 14:46:25
+# total: 1 files, 300.0 KB
 ```
 
 ## S3 Configuration
