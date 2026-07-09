@@ -24,6 +24,11 @@ jobs:
         run: |
           ./scripts/build-deb.sh amd64 ${{ github.ref_name }}
           ./scripts/build-deb.sh arm64 ${{ github.ref_name }}
+          # Unversioned copies so releases/latest/download/boxdb_<arch>.deb
+          # always resolves, whatever the current version is.
+          VER="${{ github.ref_name }}"
+          cp "dist/boxdb_${VER#v}_amd64.deb" dist/boxdb_amd64.deb
+          cp "dist/boxdb_${VER#v}_arm64.deb" dist/boxdb_arm64.deb
 
       - name: Create GitHub release
         env:

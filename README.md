@@ -6,11 +6,17 @@ A CLI tool for backing up databases, written in Go. Targets Ubuntu/Linux.
 
 ### Recommended: .deb package (apt)
 
-Check the latest version on the
-[releases page](https://github.com/tockzazazx/db-backup/releases), then:
+```sh
+wget https://github.com/tockzazazx/db-backup/releases/latest/download/boxdb_amd64.deb
+sudo apt install ./boxdb_amd64.deb
+```
+
+To install a specific (or prerelease) version instead, the tag and the
+versioned filename must match — mixing `latest` with a versioned filename
+404s:
 
 ```sh
-VERSION=0.3.0   # <- latest version, without the "v"
+VERSION=0.3.0   # <- without the "v"
 wget "https://github.com/tockzazazx/db-backup/releases/download/v${VERSION}/boxdb_${VERSION}_amd64.deb"
 sudo apt install "./boxdb_${VERSION}_amd64.deb"
 ```
