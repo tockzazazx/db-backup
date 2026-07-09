@@ -4,26 +4,55 @@ A CLI tool for backing up databases, written in Go. Targets Ubuntu/Linux.
 
 ## Install (Ubuntu)
 
-### Via install script (wget)
+### Recommended: .deb package (apt)
+
+```sh
+wget https://github.com/tockzazazx/db-backup/releases/latest/download/boxdb_amd64.deb
+sudo apt install ./boxdb_amd64.deb
+```
+
+To install a specific (or prerelease) version instead, the tag and the
+versioned filename must match — mixing `latest` with a versioned filename
+404s:
+
+```sh
+VERSION=0.3.0   # <- without the "v"
+wget "https://github.com/tockzazazx/db-backup/releases/download/v${VERSION}/boxdb_${VERSION}_amd64.deb"
+sudo apt install "./boxdb_${VERSION}_amd64.deb"
+```
+
+Upgrading works the same way: download the newer .deb and `apt install` it
+again. apt tracks the package, so you can inspect or remove it later with:
+
+```sh
+apt list --installed | grep boxdb
+sudo apt remove boxdb
+```
+
+### Alternative: install script (wget)
+
+For machines where you can't use apt. Installs the latest release binary to
+`/usr/local/bin`:
 
 ```sh
 wget -qO- https://github.com/tockzazazx/db-backup/releases/latest/download/install.sh | bash
 ```
 
-### Via .deb package (apt)
-
-```sh
-wget https://github.com/tockzazazx/db-backup/releases/latest/download/boxdb_0.1.0_amd64.deb
-sudo apt install ./boxdb_0.1.0_amd64.deb
-```
-
-(Replace the version/arch in the filename with the latest release — see the
-[releases page](https://github.com/tockzazazx/db-backup/releases).)
+> **Warning:** pick one method and stick with it. The script installs to
+> `/usr/local/bin` while the .deb installs to `/usr/bin`, and PATH prefers
+> `/usr/local/bin` — so a leftover script install shadows any .deb install
+> and `boxdb --version` keeps showing the old version. If you switch from
+> the script to the .deb, remove the old binary first:
+>
+> ```sh
+> sudo rm /usr/local/bin/boxdb && hash -r
+> ```
 
 ### Verify
 
 ```sh
 boxdb --version
+which -a boxdb   # should list exactly one path
 ```
 
 ## Usage
@@ -32,7 +61,26 @@ boxdb --version
 boxdb --version   # print version
 boxdb config      # show saved S3 config
 boxdb test        # test the S3 connection
+boxdb upload      # upload new files from the configured paths
 boxdb run         # run a backup
+```
+
+## Upload
+
+`boxdb upload` sweeps every directory in `paths` and uploads files into the
+bucket under `<folder>/<upload-date>/`, e.g. `ubuntu-server-01/2026-07-08/db1.pg`.
+
+- Only files that have never been uploaded are sent — a file counts as
+  uploaded when an object with the same name already exists under `folder`,
+  in any date subfolder.
+- Files removed locally are never deleted from the bucket.
+- Subdirectories and dotfiles are skipped.
+
+```sh
+boxdb upload
+# upload: /var/backups/3.pg -> ubuntu-server-01/2026-07-08/3.pg (300.0 KB)
+# skip:   2.pg (already uploaded)
+# done: 1 uploaded, 1 skipped
 ```
 
 ## S3 Configuration

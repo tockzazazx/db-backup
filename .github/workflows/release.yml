@@ -24,15 +24,24 @@ jobs:
         run: |
           ./scripts/build-deb.sh amd64 ${{ github.ref_name }}
           ./scripts/build-deb.sh arm64 ${{ github.ref_name }}
+          # Unversioned copies so releases/latest/download/boxdb_<arch>.deb
+          # always resolves, whatever the current version is.
+          VER="${{ github.ref_name }}"
+          cp "dist/boxdb_${VER#v}_amd64.deb" dist/boxdb_amd64.deb
+          cp "dist/boxdb_${VER#v}_arm64.deb" dist/boxdb_arm64.deb
 
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          PRERELEASE=""
+          case "${{ github.ref_name }}" in
+            *-*) PRERELEASE="--prerelease" ;;
+          esac
           gh release create "${{ github.ref_name }}" \
             bin/boxdb_linux_amd64 \
             bin/boxdb_linux_arm64 \
             dist/*.deb \
             scripts/install.sh \
             --title "${{ github.ref_name }}" \
-            --generate-notes
+            --generate-notes $PRERELEASE

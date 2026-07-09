@@ -6,6 +6,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -35,6 +37,8 @@ func main() {
 		err = configCmd(os.Args[2:])
 	case "test":
 		err = testCmd()
+	case "upload":
+		err = uploadCmd()
 	case "run":
 		err = runCmd()
 	default:
@@ -142,17 +146,22 @@ func testCmd() error {
 		return err
 	}
 
+	client, err := s3.New(cfg)
+	if err != nil {
+		return err
+	}
+
 	fmt.Printf("connecting to %s (bucket %q, ssl=%v)...\n", cfg.Endpoint, cfg.Bucket, cfg.UseSSL)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	if err := s3.Check(ctx, cfg); err != nil {
+	if err := client.Check(ctx); err != nil {
 		return err
 	}
 	fmt.Println("OK: connection successful, bucket is accessible")
 
 	if cfg.Folder != "" {
-		created, err := s3.EnsureFolder(ctx, cfg)
+		created, err := client.EnsureFolder(ctx)
 		if err != nil {
 			return err
 		}
@@ -175,6 +184,97 @@ func testCmd() error {
 		}
 	}
 	return nil
+}
+
+// uploadCmd sweeps the configured local paths and uploads files that have
+// never been uploaded before into <folder>/<upload-date>/. Files that
+// disappeared locally are never deleted from the bucket.
+func uploadCmd() error {
+	cfg, err := config.LoadS3()
+	if err != nil {
+		if errors.Is(err, config.ErrNoConfig) {
+			return fmt.Errorf("%v\nconfigure credentials first:\n  boxdb config --endpoint <host:port> --access <key> --secret <key> --bucket <name>", err)
+		}
+		return err
+	}
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	if cfg.Folder == "" {
+		return errors.New("no folder configured — set one with: boxdb config --folder <name>")
+	}
+	if len(cfg.Paths) == 0 {
+		return errors.New("no local paths configured — set them with: boxdb config --paths <dir,dir>")
+	}
+
+	client, err := s3.New(cfg)
+	if err != nil {
+		return err
+	}
+
+	// Quick connectivity check before doing any work; uploads themselves get
+	// no deadline since dump files can be large.
+	checkCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	err = client.Check(checkCtx)
+	cancel()
+	if err != nil {
+		return err
+	}
+
+	ctx := context.Background()
+	uploaded, err := client.UploadedNames(ctx)
+	if err != nil {
+		return err
+	}
+
+	dateFolder := time.Now().Format("2006-01-02")
+	var nUploaded, nSkipped int
+	for _, dir := range cfg.Paths {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			fmt.Printf("WARN: cannot read %s: %v\n", dir, err)
+			continue
+		}
+		for _, e := range entries {
+			name := e.Name()
+			if e.IsDir() || strings.HasPrefix(name, ".") {
+				continue
+			}
+			if uploaded[name] {
+				fmt.Printf("skip:   %s (already uploaded)\n", name)
+				nSkipped++
+				continue
+			}
+			localPath := filepath.Join(dir, name)
+			key := path.Join(cfg.Folder, dateFolder, name)
+			size := ""
+			if info, err := e.Info(); err == nil {
+				size = " (" + humanSize(info.Size()) + ")"
+			}
+			fmt.Printf("upload: %s -> %s%s\n", localPath, key, size)
+			if err := client.Upload(ctx, key, localPath); err != nil {
+				return err
+			}
+			uploaded[name] = true
+			nUploaded++
+		}
+	}
+
+	fmt.Printf("done: %d uploaded, %d skipped\n", nUploaded, nSkipped)
+	return nil
+}
+
+func humanSize(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for m := n / unit; m >= unit; m /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGTP"[exp])
 }
 
 // splitPaths parses a comma-separated list of directories, dropping blanks.
@@ -243,6 +343,7 @@ func usage() {
 Usage:
   boxdb config [flags]  save S3 credentials (no flags: show current config)
   boxdb test            test the S3 connection using the saved config
+  boxdb upload          upload new files from the configured paths to S3
   boxdb run             run a backup
   boxdb --version       print version
 
