@@ -64,6 +64,7 @@ boxdb test        # test the S3 connection
 boxdb upload      # upload new files from the configured paths
 boxdb list        # list date folders on S3
 boxdb list <date> # list files in one date folder
+boxdb schedule    # show / install / remove the daily auto-upload
 ```
 
 ## Upload
@@ -133,6 +134,26 @@ boxdb test
 local paths that don't exist. Errors are reported for missing config,
 unreachable endpoints, bad credentials, and missing buckets.
 
+## Scheduled uploads
+
+Run `boxdb upload` automatically every day via a systemd timer:
+
+```sh
+sudo boxdb schedule --daily 03:00   # install (or change the time)
+boxdb schedule                      # show status, next run, last result
+sudo boxdb schedule --remove        # uninstall
+```
+
+Notes:
+
+- The upload runs as the user who invoked `sudo` (via `$SUDO_USER`), so it
+  reads that user's `~/.config/boxdb/config.json` — run `boxdb config` and
+  `boxdb test` as that user first.
+- `Persistent=true` is set: if the machine was off at the scheduled time,
+  the upload runs right after boot instead of being skipped.
+- Run logs: `journalctl -u boxdb-upload.service`.
+- One schedule per machine; installing again overwrites the previous time.
+
 ## Project Structure
 
 ```
@@ -141,7 +162,8 @@ unreachable endpoints, bad credentials, and missing buckets.
 │   └── boxdb/          # main entrypoint
 ├── internal/
 │   ├── config/         # config file handling (~/.config/boxdb/config.json)
-│   └── s3/             # MinIO client wrapper (check, upload, list)
+│   ├── s3/             # MinIO client wrapper (check, upload, list)
+│   └── schedule/       # systemd timer install/status/remove
 ├── scripts/
 │   ├── build-deb.sh    # package a .deb from a built binary
 │   └── install.sh      # end-user install script

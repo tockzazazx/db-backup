@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/user"
 	"path"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/punnawish/db-backup/internal/config"
 	"github.com/punnawish/db-backup/internal/s3"
+	"github.com/punnawish/db-backup/internal/schedule"
 )
 
 // Set at build time via -ldflags "-X main.version=... -X main.commit=... -X main.date=..."
@@ -40,6 +42,8 @@ func main() {
 		err = uploadCmd()
 	case "list":
 		err = listCmd(os.Args[2:])
+	case "schedule":
+		err = scheduleCmd(os.Args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", os.Args[1])
 		usage()
@@ -322,6 +326,80 @@ func listCmd(args []string) error {
 	return nil
 }
 
+// scheduleCmd manages the daily auto-upload systemd timer.
+func scheduleCmd(args []string) error {
+	fs := flag.NewFlagSet("schedule", flag.ExitOnError)
+	daily := fs.String("daily", "", `time of day to run "boxdb upload", 24-hour HH:MM (e.g. 03:00)`)
+	remove := fs.Bool("remove", false, "remove the schedule")
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "Usage: sudo boxdb schedule --daily <HH:MM>   (install/update the daily upload)")
+		fmt.Fprintln(os.Stderr, "       boxdb schedule                        (show the current schedule)")
+		fmt.Fprintln(os.Stderr, "       sudo boxdb schedule --remove          (remove the schedule)")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	switch {
+	case *remove:
+		if err := schedule.Remove(); err != nil {
+			return err
+		}
+		fmt.Println("schedule removed")
+		return nil
+
+	case *daily != "":
+		at, err := schedule.ParseTime(*daily)
+		if err != nil {
+			return err
+		}
+		runAs := os.Getenv("SUDO_USER")
+		if runAs == "" {
+			u, err := user.Current()
+			if err != nil {
+				return err
+			}
+			runAs = u.Username
+		}
+		exe, err := os.Executable()
+		if err != nil {
+			return err
+		}
+		if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+			exe = resolved
+		}
+
+		d := schedule.Daily{Time: at, User: runAs, Exec: exe}
+		if err := schedule.Install(d); err != nil {
+			return err
+		}
+		fmt.Printf("schedule installed: %s upload runs daily at %s as user %s\n", exe, at, runAs)
+		fmt.Printf("check it with:  boxdb schedule\nsee run logs:   journalctl -u boxdb-upload.service\n")
+		if runAs == "root" {
+			fmt.Println("NOTE: running as root — the upload reads root's config (/root/.config/boxdb/config.json)")
+		}
+		return nil
+
+	default:
+		info, err := schedule.Status()
+		if err != nil {
+			return err
+		}
+		if info == nil {
+			fmt.Println("no schedule configured — set one with: sudo boxdb schedule --daily 03:00")
+			return nil
+		}
+		fmt.Println("schedule :", "daily at", valueOr(info.Time, "(unknown)"))
+		fmt.Println("command  :", valueOr(info.Exec, "(unknown)"), "(user "+valueOr(info.User, "?")+")")
+		fmt.Println("timer    :", valueOr(info.Active, "unknown"))
+		fmt.Println("next run :", valueOr(info.NextRun, "-"))
+		fmt.Println("last run :", valueOr(info.LastRun, "never"), "(result: "+valueOr(info.LastResult, "-")+")")
+		fmt.Println("run logs : journalctl -u boxdb-upload.service")
+		return nil
+	}
+}
+
 func humanSize(n int64) string {
 	const unit = 1024
 	if n < unit {
@@ -394,6 +472,9 @@ Usage:
   boxdb test            test the S3 connection using the saved config
   boxdb upload          upload new files from the configured paths to S3
   boxdb list [date]     list files in a date folder on S3 (no arg: list date folders)
+  boxdb schedule        show the daily auto-upload schedule
+  boxdb schedule --daily <HH:MM>   install/update it (needs sudo)
+  boxdb schedule --remove          remove it (needs sudo)
   boxdb --version       print version
 
 Config flags:
