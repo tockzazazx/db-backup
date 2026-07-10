@@ -330,9 +330,10 @@ func listCmd(args []string) error {
 func scheduleCmd(args []string) error {
 	fs := flag.NewFlagSet("schedule", flag.ExitOnError)
 	daily := fs.String("daily", "", `time of day to run "boxdb upload", 24-hour HH:MM (e.g. 03:00)`)
+	runAsFlag := fs.String("user", "", "system user the upload runs as (default: $SUDO_USER, else the current user)")
 	remove := fs.Bool("remove", false, "remove the schedule")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: sudo boxdb schedule --daily <HH:MM>   (install/update the daily upload)")
+		fmt.Fprintln(os.Stderr, "Usage: sudo boxdb schedule --daily <HH:MM> [--user <name>]   (install/update the daily upload)")
 		fmt.Fprintln(os.Stderr, "       boxdb schedule                        (show the current schedule)")
 		fmt.Fprintln(os.Stderr, "       sudo boxdb schedule --remove          (remove the schedule)")
 		fs.PrintDefaults()
@@ -354,7 +355,10 @@ func scheduleCmd(args []string) error {
 		if err != nil {
 			return err
 		}
-		runAs := os.Getenv("SUDO_USER")
+		runAs := *runAsFlag
+		if runAs == "" {
+			runAs = os.Getenv("SUDO_USER")
+		}
 		if runAs == "" {
 			u, err := user.Current()
 			if err != nil {
@@ -362,6 +366,19 @@ func scheduleCmd(args []string) error {
 			}
 			runAs = u.Username
 		}
+		// The upload reads this user's boxdb config; verify both up front so
+		// a mismatch surfaces now instead of as a silent failure at 3 AM.
+		u, err := user.Lookup(runAs)
+		if err != nil {
+			return fmt.Errorf("user %q does not exist on this machine (pick one with --user <name>)", runAs)
+		}
+		cfgPath := filepath.Join(u.HomeDir, ".config", "boxdb", "config.json")
+		if _, err := os.Stat(cfgPath); err != nil {
+			return fmt.Errorf("user %q has no boxdb config at %s — the scheduled upload would fail.\n"+
+				"either run \"boxdb config\" and \"boxdb test\" as %s first, or pick the user that has a config: boxdb schedule --daily %s --user <name>",
+				runAs, cfgPath, runAs, at)
+		}
+
 		exe, err := os.Executable()
 		if err != nil {
 			return err
@@ -374,11 +391,8 @@ func scheduleCmd(args []string) error {
 		if err := schedule.Install(d); err != nil {
 			return err
 		}
-		fmt.Printf("schedule installed: %s upload runs daily at %s as user %s\n", exe, at, runAs)
+		fmt.Printf("schedule installed: %s upload runs daily at %s as user %s (config: %s)\n", exe, at, runAs, cfgPath)
 		fmt.Printf("check it with:  boxdb schedule\nsee run logs:   journalctl -u boxdb-upload.service\n")
-		if runAs == "root" {
-			fmt.Println("NOTE: running as root — the upload reads root's config (/root/.config/boxdb/config.json)")
-		}
 		return nil
 
 	default:

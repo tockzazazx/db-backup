@@ -148,7 +148,11 @@ Notes:
 
 - The upload runs as the user who invoked `sudo` (via `$SUDO_USER`), so it
   reads that user's `~/.config/boxdb/config.json` — run `boxdb config` and
-  `boxdb test` as that user first.
+  `boxdb test` as that user first. Installing refuses to proceed when that
+  user has no config.
+- In a root shell reached via `sudo su` / `sudo -i`, `$SUDO_USER` still
+  points at the original user — pass `--user` to pick explicitly, e.g.
+  `boxdb schedule --daily 03:00 --user root`.
 - `Persistent=true` is set: if the machine was off at the scheduled time,
   the upload runs right after boot instead of being skipped.
 - Run logs: `journalctl -u boxdb-upload.service`.
