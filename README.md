@@ -66,7 +66,8 @@ boxdb test        # test the S3 connection
 boxdb upload      # upload new files from the configured paths
 boxdb list        # list date folders on S3
 boxdb list <date> # list files in one date folder
-boxdb schedule    # show / install / remove the daily auto-upload
+boxdb download <date>[/<file>] <dest-dir>   # download from S3
+boxdb schedule    # show / install / remove the auto-upload schedule
 ```
 
 ## Upload
@@ -135,6 +136,22 @@ boxdb test
 `boxdb test` also creates the configured folder when missing and warns about
 local paths that don't exist. Errors are reported for missing config,
 unreachable endpoints, bad credentials, and missing buckets.
+
+## Download
+
+Fetch one file or a whole date folder back from S3:
+
+```sh
+boxdb download 2026-07-08/db1.pg /root/restore   # one file
+boxdb download 2026-07-08 /root/restore          # every file in that date folder
+```
+
+- The destination must be a directory; it is created if missing.
+- Existing files are never overwritten — a counter goes in before the
+  extension instead: `db1.pg` → `db1 (1).pg` (compound extensions are kept
+  together: `backup.tar.gz` → `backup (1).tar.gz`).
+- Files are downloaded to a temporary `.part` name and renamed only when
+  complete, so a file with its final name is never half-written.
 
 ## Scheduled uploads
 

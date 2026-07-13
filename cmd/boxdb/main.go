@@ -42,6 +42,8 @@ func main() {
 		err = uploadCmd()
 	case "list":
 		err = listCmd(os.Args[2:])
+	case "download":
+		err = downloadCmd(os.Args[2:])
 	case "schedule":
 		err = scheduleCmd(os.Args[2:])
 	default:
@@ -326,6 +328,120 @@ func listCmd(args []string) error {
 	return nil
 }
 
+// downloadCmd fetches one file or a whole date folder from S3 into a local
+// directory. Existing local names are never overwritten — a " (N)" counter
+// is added before the extension instead.
+func downloadCmd(args []string) error {
+	if len(args) != 2 {
+		return errors.New("usage: boxdb download <date-folder>[/<file>] <dest-dir>\n" +
+			"e.g.   boxdb download 2026-07-08/db1.pg /root/restore\n" +
+			"       boxdb download 2026-07-08 /root/restore")
+	}
+	remote := strings.Trim(args[0], "/")
+	destDir := args[1]
+
+	cfg, err := config.LoadS3()
+	if err != nil {
+		if errors.Is(err, config.ErrNoConfig) {
+			return fmt.Errorf("%v\nconfigure credentials first:\n  boxdb config --endpoint <host:port> --access <key> --secret <key> --bucket <name>", err)
+		}
+		return err
+	}
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	if cfg.Folder == "" {
+		return errors.New("no folder configured — set one with: boxdb config --folder <name>")
+	}
+
+	client, err := s3.New(cfg)
+	if err != nil {
+		return err
+	}
+	checkCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	err = client.Check(checkCtx)
+	cancel()
+	if err != nil {
+		return err
+	}
+
+	// No deadline on the downloads themselves: dump files can be large.
+	ctx := context.Background()
+
+	// A single object at that path wins; otherwise treat it as a date folder.
+	type item struct {
+		sub  string
+		size int64
+	}
+	var items []item
+	isFile, size, err := client.IsFile(ctx, remote)
+	if err != nil {
+		return err
+	}
+	if isFile {
+		items = append(items, item{remote, size})
+	} else {
+		files, err := client.ListFiles(ctx, remote)
+		if err != nil {
+			return err
+		}
+		if len(files) == 0 {
+			return fmt.Errorf("nothing found at %s/%s — run boxdb list to see what's available", cfg.Folder, remote)
+		}
+		for _, f := range files {
+			items = append(items, item{path.Join(remote, f.Name), f.Size})
+		}
+	}
+
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		return fmt.Errorf("create destination %s: %w", destDir, err)
+	}
+
+	for _, it := range items {
+		local, err := uniquePath(destDir, path.Base(it.sub))
+		if err != nil {
+			return err
+		}
+		fmt.Printf("download: %s -> %s (%s)\n", path.Join(cfg.Folder, it.sub), local, humanSize(it.size))
+		if err := client.Download(ctx, it.sub, local); err != nil {
+			return err
+		}
+	}
+	fmt.Printf("done: %d downloaded to %s\n", len(items), destDir)
+	return nil
+}
+
+// multiExts are compound extensions that a " (N)" counter must not split.
+var multiExts = []string{".tar.gz", ".tar.zst", ".tar.bz2", ".tar.xz", ".sql.gz"}
+
+func splitExt(name string) (base, ext string) {
+	lower := strings.ToLower(name)
+	for _, me := range multiExts {
+		if strings.HasSuffix(lower, me) {
+			return name[:len(name)-len(me)], name[len(name)-len(me):]
+		}
+	}
+	ext = filepath.Ext(name)
+	return strings.TrimSuffix(name, ext), ext
+}
+
+// uniquePath returns dir/name, or dir/"name (N)" with the counter before
+// the extension when that name is already taken.
+func uniquePath(dir, name string) (string, error) {
+	p := filepath.Join(dir, name)
+	if _, err := os.Stat(p); errors.Is(err, os.ErrNotExist) {
+		return p, nil
+	}
+	base, ext := splitExt(name)
+	for i := 1; i <= 10000; i++ {
+		p = filepath.Join(dir, fmt.Sprintf("%s (%d)%s", base, i, ext))
+		if _, err := os.Stat(p); errors.Is(err, os.ErrNotExist) {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("more than 10000 copies of %s in %s — clean up first", name, dir)
+}
+
 // scheduleCmd manages the daily auto-upload systemd timer.
 func scheduleCmd(args []string) error {
 	fs := flag.NewFlagSet("schedule", flag.ExitOnError)
@@ -521,6 +637,9 @@ Usage:
   boxdb test            test the S3 connection using the saved config
   boxdb upload          upload new files from the configured paths to S3
   boxdb list [date]     list files in a date folder on S3 (no arg: list date folders)
+  boxdb download <date>[/<file>] <dest-dir>
+                        download one file or a whole date folder from S3;
+                        existing names get a " (N)" suffix, never overwritten
   boxdb schedule        show the auto-upload schedule
   boxdb schedule --daily <HH:MM>                    run every day (needs sudo)
   boxdb schedule --weekly <days> --at <HH:MM>       run on weekday(s), e.g. sat,sun

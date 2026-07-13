@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"path"
 	"sort"
 	"strings"
@@ -136,4 +137,31 @@ func (c *Client) Upload(ctx context.Context, key, localPath string) error {
 		return fmt.Errorf("upload %s: %w", localPath, err)
 	}
 	return nil
+}
+
+// IsFile reports whether cfg.Folder/<sub> is an existing object (as opposed
+// to a date-folder prefix), and its size when it is.
+func (c *Client) IsFile(ctx context.Context, sub string) (bool, int64, error) {
+	key := path.Join(strings.Trim(c.cfg.Folder, "/"), strings.Trim(sub, "/"))
+	info, err := c.mc.StatObject(ctx, c.cfg.Bucket, key, minio.StatObjectOptions{})
+	if err == nil {
+		return true, info.Size, nil
+	}
+	if minio.ToErrorResponse(err).Code == "NoSuchKey" {
+		return false, 0, nil
+	}
+	return false, 0, fmt.Errorf("stat %s: %w", key, err)
+}
+
+// Download fetches cfg.Folder/<sub> into localPath. It writes to a
+// temporary .part file and renames only on success, so a file with the
+// final name is always complete.
+func (c *Client) Download(ctx context.Context, sub, localPath string) error {
+	key := path.Join(strings.Trim(c.cfg.Folder, "/"), strings.Trim(sub, "/"))
+	tmp := localPath + ".part"
+	if err := c.mc.FGetObject(ctx, c.cfg.Bucket, key, tmp, minio.GetObjectOptions{}); err != nil {
+		os.Remove(tmp)
+		return fmt.Errorf("download %s: %w", key, err)
+	}
+	return os.Rename(tmp, localPath)
 }
