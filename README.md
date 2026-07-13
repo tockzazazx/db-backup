@@ -136,13 +136,23 @@ unreachable endpoints, bad credentials, and missing buckets.
 
 ## Scheduled uploads
 
-Run `boxdb upload` automatically every day via a systemd timer:
+Run `boxdb upload` automatically via a systemd timer — daily, weekly, or
+monthly (one schedule per machine):
 
 ```sh
-sudo boxdb schedule --daily 03:00   # install (or change the time)
-boxdb schedule                      # show status, next run, last result
-sudo boxdb schedule --remove        # uninstall
+sudo boxdb schedule --daily 03:00                    # every day at 03:00
+sudo boxdb schedule --weekly saturday --at 03:00     # every Saturday
+sudo boxdb schedule --weekly sat,sun --at 03:00      # several days a week
+sudo boxdb schedule --monthly 1 --at 03:00           # the 1st of every month
+sudo boxdb schedule --monthly last --at 03:00        # the last day of every month
+boxdb schedule                                       # show status, next run, last result
+sudo boxdb schedule --remove                         # uninstall
 ```
+
+`--monthly` accepts 1-28 or `last`. Days 29-31 are rejected on purpose:
+systemd would silently skip months without that day (no backup in
+February!) — `last` always means the final day, whether that's the 28th,
+29th, 30th, or 31st.
 
 Notes:
 
