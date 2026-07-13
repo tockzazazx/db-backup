@@ -1,5 +1,5 @@
 // Package schedule manages the systemd timer that runs "boxdb upload"
-// automatically. Only one schedule is supported: a daily run at a fixed time.
+// automatically. One schedule per machine: daily, weekly, or monthly.
 package schedule
 
 import (
@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -16,25 +17,130 @@ const (
 	unitDir     = "/etc/systemd/system"
 	serviceFile = "boxdb-upload.service"
 	timerFile   = "boxdb-upload.timer"
+
+	// descPrefix marks our units; Status reads the human description back
+	// from the timer file instead of re-parsing the OnCalendar expression.
+	descPrefix = "boxdb upload "
 )
 
-// Daily describes the schedule: one upload per day.
-type Daily struct {
-	Time string // "HH:MM", 24-hour clock
-	User string // system user the upload runs as (owns the boxdb config)
-	Exec string // absolute path to the boxdb binary
+// Spec is one fully-described schedule ready to install.
+type Spec struct {
+	OnCalendar  string // systemd calendar expression
+	Description string // human readable, e.g. "weekly on Saturday at 03:00"
+	User        string // system user the upload runs as (owns the boxdb config)
+	Exec        string // absolute path to the boxdb binary
 }
 
 // ParseTime validates and normalizes a 24-hour "HH:MM" string.
 func ParseTime(s string) (string, error) {
 	t, err := time.Parse("15:04", s)
 	if err != nil {
-		return "", fmt.Errorf("invalid time %q — use 24-hour HH:MM, e.g. --daily 03:00", s)
+		return "", fmt.Errorf("invalid time %q — use 24-hour HH:MM, e.g. 03:00", s)
 	}
 	return t.Format("15:04"), nil
 }
 
-func serviceUnit(d Daily) string {
+// Daily builds a schedule that runs every day at the given time.
+func Daily(at string) (Spec, error) {
+	t, err := ParseTime(at)
+	if err != nil {
+		return Spec{}, err
+	}
+	return Spec{
+		OnCalendar:  fmt.Sprintf("*-*-* %s:00", t),
+		Description: "daily at " + t,
+	}, nil
+}
+
+var weekdays = map[string]string{
+	"monday": "Mon", "mon": "Mon",
+	"tuesday": "Tue", "tue": "Tue",
+	"wednesday": "Wed", "wed": "Wed",
+	"thursday": "Thu", "thu": "Thu",
+	"friday": "Fri", "fri": "Fri",
+	"saturday": "Sat", "sat": "Sat",
+	"sunday": "Sun", "sun": "Sun",
+}
+
+var weekdayNames = map[string]string{
+	"Mon": "Monday", "Tue": "Tuesday", "Wed": "Wednesday", "Thu": "Thursday",
+	"Fri": "Friday", "Sat": "Saturday", "Sun": "Sunday",
+}
+
+// Weekly builds a schedule for one or more days of the week (comma-separated
+// names like "saturday" or "sat,sun") at the given time.
+func Weekly(days, at string) (Spec, error) {
+	if at == "" {
+		return Spec{}, fmt.Errorf("--weekly needs a time — add --at HH:MM, e.g. --weekly %s --at 03:00", days)
+	}
+	t, err := ParseTime(at)
+	if err != nil {
+		return Spec{}, err
+	}
+
+	var abbrs, names []string
+	seen := map[string]bool{}
+	for _, raw := range strings.Split(days, ",") {
+		day := strings.ToLower(strings.TrimSpace(raw))
+		if day == "" {
+			continue
+		}
+		abbr, ok := weekdays[day]
+		if !ok {
+			return Spec{}, fmt.Errorf("unknown day %q — use monday..sunday or mon..sun", raw)
+		}
+		if !seen[abbr] {
+			seen[abbr] = true
+			abbrs = append(abbrs, abbr)
+			names = append(names, weekdayNames[abbr])
+		}
+	}
+	if len(abbrs) == 0 {
+		return Spec{}, fmt.Errorf("no day given — e.g. --weekly saturday or --weekly sat,sun")
+	}
+
+	return Spec{
+		OnCalendar:  fmt.Sprintf("%s *-*-* %s:00", strings.Join(abbrs, ","), t),
+		Description: fmt.Sprintf("weekly on %s at %s", strings.Join(names, ", "), t),
+	}, nil
+}
+
+// Monthly builds a schedule for a day of month (1-28) or "last" (the final
+// day of every month, however long the month is) at the given time.
+// Days 29-31 are rejected: systemd would silently skip months that don't
+// have them, and a backup that skips February is a trap.
+func Monthly(day, at string) (Spec, error) {
+	if at == "" {
+		return Spec{}, fmt.Errorf("--monthly needs a time — add --at HH:MM, e.g. --monthly %s --at 03:00", day)
+	}
+	t, err := ParseTime(at)
+	if err != nil {
+		return Spec{}, err
+	}
+
+	if strings.EqualFold(day, "last") {
+		return Spec{
+			OnCalendar:  fmt.Sprintf("*-*-~1 %s:00", t),
+			Description: "monthly on the last day of the month at " + t,
+		}, nil
+	}
+	n, err := strconv.Atoi(day)
+	if err != nil {
+		return Spec{}, fmt.Errorf("invalid day of month %q — use 1-28 or \"last\"", day)
+	}
+	if n >= 29 && n <= 31 {
+		return Spec{}, fmt.Errorf("day %d doesn't exist in every month, so some months would be skipped — use --monthly last for the last day of the month", n)
+	}
+	if n < 1 || n > 28 {
+		return Spec{}, fmt.Errorf("day of month must be 1-28 or \"last\", got %d", n)
+	}
+	return Spec{
+		OnCalendar:  fmt.Sprintf("*-*-%02d %s:00", n, t),
+		Description: fmt.Sprintf("monthly on day %d at %s", n, t),
+	}, nil
+}
+
+func serviceUnit(s Spec) string {
 	return fmt.Sprintf(`[Unit]
 Description=boxdb upload to S3
 Wants=network-online.target
@@ -44,20 +150,20 @@ After=network-online.target
 Type=oneshot
 User=%s
 ExecStart=%s upload
-`, d.User, d.Exec)
+`, s.User, s.Exec)
 }
 
-func timerUnit(d Daily) string {
+func timerUnit(s Spec) string {
 	return fmt.Sprintf(`[Unit]
-Description=Daily boxdb upload at %s
+Description=%s%s
 
 [Timer]
-OnCalendar=*-*-* %s:00
+OnCalendar=%s
 Persistent=true
 
 [Install]
 WantedBy=timers.target
-`, d.Time, d.Time)
+`, descPrefix, s.Description, s.OnCalendar)
 }
 
 func requireSystemd() error {
@@ -77,23 +183,44 @@ func Installed() bool {
 }
 
 // Install writes the systemd units and enables the timer. Needs root.
-func Install(d Daily) error {
+func Install(s Spec) error {
 	if err := requireSystemd(); err != nil {
 		return err
 	}
 	if os.Geteuid() != 0 {
-		return fmt.Errorf("writing to %s needs root — run: sudo boxdb schedule --daily %s", unitDir, d.Time)
+		return fmt.Errorf("writing to %s needs root — rerun with sudo", unitDir)
 	}
-	if err := os.WriteFile(filepath.Join(unitDir, serviceFile), []byte(serviceUnit(d)), 0o644); err != nil {
+	// Let systemd double-check the calendar expression before we commit it.
+	if _, err := exec.LookPath("systemd-analyze"); err == nil {
+		if out, err := exec.Command("systemd-analyze", "calendar", s.OnCalendar).CombinedOutput(); err != nil {
+			return fmt.Errorf("systemd rejected calendar expression %q: %s", s.OnCalendar, strings.TrimSpace(string(out)))
+		}
+	}
+	if err := os.WriteFile(filepath.Join(unitDir, serviceFile), []byte(serviceUnit(s)), 0o644); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(unitDir, timerFile), []byte(timerUnit(d)), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(unitDir, timerFile), []byte(timerUnit(s)), 0o644); err != nil {
 		return err
 	}
 	if err := systemctl("daemon-reload"); err != nil {
 		return err
 	}
 	return systemctl("enable", "--now", timerFile)
+}
+
+// NextElapse asks systemd when the expression fires next. Best effort:
+// returns "" when it can't tell.
+func NextElapse(expr string) string {
+	out, err := exec.Command("systemd-analyze", "calendar", expr).Output()
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "Next elapse:"); ok {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }
 
 // Remove disables the timer and deletes the unit files. Needs root.
@@ -117,7 +244,8 @@ func Remove() error {
 
 // Info describes the installed schedule for display.
 type Info struct {
-	Time       string // configured HH:MM
+	Schedule   string // human description, e.g. "weekly on Saturday at 03:00"
+	OnCalendar string
 	User       string
 	Exec       string // full ExecStart line
 	Active     string // systemd active state of the timer
@@ -148,8 +276,17 @@ func Status() (*Info, error) {
 	}
 	if data, err := os.ReadFile(filepath.Join(unitDir, timerFile)); err == nil {
 		for _, line := range strings.Split(string(data), "\n") {
-			if v, ok := strings.CutPrefix(line, "OnCalendar=*-*-* "); ok {
-				info.Time = strings.TrimSuffix(v, ":00")
+			if v, ok := strings.CutPrefix(line, "Description="+descPrefix); ok {
+				info.Schedule = v
+			}
+			if v, ok := strings.CutPrefix(line, "OnCalendar="); ok {
+				info.OnCalendar = v
+			}
+			// Timers installed before v0.8.0 carry the time in OnCalendar only.
+			if info.Schedule == "" {
+				if v, ok := strings.CutPrefix(line, "OnCalendar=*-*-* "); ok {
+					info.Schedule = "daily at " + strings.TrimSuffix(v, ":00")
+				}
 			}
 		}
 	}
