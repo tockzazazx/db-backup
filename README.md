@@ -1,5 +1,7 @@
 # boxdb (db-backup)
 
+**English** | [ไทย](README.th.md)
+
 A CLI tool for backing up databases, written in Go. Targets Ubuntu/Linux.
 
 ## Install (Ubuntu)
