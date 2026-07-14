@@ -66,7 +66,8 @@ boxdb test        # test the S3 connection
 boxdb upload      # upload new files from the configured paths
 boxdb list        # list date folders on S3
 boxdb list <date> # list files in one date folder
-boxdb schedule    # show / install / remove the daily auto-upload
+boxdb download <date>[/<file>] <dest-dir>   # download from S3
+boxdb schedule    # show / install / remove the auto-upload schedule
 ```
 
 ## Upload
@@ -136,6 +137,22 @@ boxdb test
 local paths that don't exist. Errors are reported for missing config,
 unreachable endpoints, bad credentials, and missing buckets.
 
+## Download
+
+Fetch one file or a whole date folder back from S3:
+
+```sh
+boxdb download 2026-07-08/db1.pg /root/restore   # one file
+boxdb download 2026-07-08 /root/restore          # every file in that date folder
+```
+
+- The destination must be a directory; it is created if missing.
+- Existing files are never overwritten — a counter goes in before the
+  extension instead: `db1.pg` → `db1 (1).pg` (compound extensions are kept
+  together: `backup.tar.gz` → `backup (1).tar.gz`).
+- Files are downloaded to a temporary `.part` name and renamed only when
+  complete, so a file with its final name is never half-written.
+
 ## Scheduled uploads
 
 Run `boxdb upload` automatically via a systemd timer — daily, weekly, or
@@ -163,8 +180,15 @@ Notes:
   `boxdb test` as that user first. Installing refuses to proceed when that
   user has no config.
 - In a root shell reached via `sudo su` / `sudo -i`, `$SUDO_USER` still
-  points at the original user — pass `--user` to pick explicitly, e.g.
-  `boxdb schedule --daily 03:00 --user root`.
+  points at the original user — pass `--user` to pick explicitly.
+  `--user` only exists on the three install forms; status and `--remove`
+  never need it:
+
+  ```sh
+  boxdb schedule --daily 03:00 --user root
+  boxdb schedule --weekly sun --at 03:00 --user root
+  boxdb schedule --monthly last --at 03:00 --user root
+  ```
 - `Persistent=true` is set: if the machine was off at the scheduled time,
   the upload runs right after boot instead of being skipped.
 - Run logs: `journalctl -u boxdb-upload.service`.
