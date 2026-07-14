@@ -180,8 +180,15 @@ Notes:
   `boxdb test` as that user first. Installing refuses to proceed when that
   user has no config.
 - In a root shell reached via `sudo su` / `sudo -i`, `$SUDO_USER` still
-  points at the original user — pass `--user` to pick explicitly, e.g.
-  `boxdb schedule --daily 03:00 --user root`.
+  points at the original user — pass `--user` to pick explicitly.
+  `--user` only exists on the three install forms; status and `--remove`
+  never need it:
+
+  ```sh
+  boxdb schedule --daily 03:00 --user root
+  boxdb schedule --weekly sun --at 03:00 --user root
+  boxdb schedule --monthly last --at 03:00 --user root
+  ```
 - `Persistent=true` is set: if the machine was off at the scheduled time,
   the upload runs right after boot instead of being skipped.
 - Run logs: `journalctl -u boxdb-upload.service`.

@@ -178,8 +178,15 @@ backup!) ส่วน `last` หมายถึงวันสุดท้าย
   ต้องรัน `boxdb config` และ `boxdb test` ด้วย user นั้นก่อน
   การติดตั้ง schedule จะไม่ยอมทำถ้า user นั้นยังไม่มี config
 - ถ้าอยู่ใน root shell ที่เข้ามาด้วย `sudo su` / `sudo -i` ตัวแปร
-  `$SUDO_USER` จะยังชี้ user เดิมอยู่ — ใช้ `--user` ระบุตรงๆ ได้ เช่น
-  `boxdb schedule --daily 03:00 --user root`
+  `$SUDO_USER` จะยังชี้ user เดิมอยู่ — ใช้ `--user` ระบุตรงๆ ได้
+  โดย `--user` มีเฉพาะสามคำสั่งติดตั้งเท่านั้น ส่วนการดูสถานะและ
+  `--remove` ไม่ต้องใช้:
+
+  ```sh
+  boxdb schedule --daily 03:00 --user root
+  boxdb schedule --weekly sun --at 03:00 --user root
+  boxdb schedule --monthly last --at 03:00 --user root
+  ```
 - มีการตั้ง `Persistent=true` ไว้: ถ้าเครื่องปิดอยู่ตอนถึงเวลา งานจะรัน
   ชดเชยทันทีหลังเปิดเครื่อง ไม่ถูกข้าม
 - ดู log การรัน: `journalctl -u boxdb-upload.service`
