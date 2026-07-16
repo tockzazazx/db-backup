@@ -23,6 +23,12 @@ type S3 struct {
 	Folder string `json:"folder,omitempty"`
 	// Paths are local directories whose files get uploaded into Folder.
 	Paths []string `json:"paths,omitempty"`
+	// NotifyTo are the email recipients for backup notifications; empty
+	// means notifications are disabled.
+	NotifyTo []string `json:"notify_to,omitempty"`
+	// NotifyToken is the email API auth token, stored encrypted
+	// (EncryptSecret) and bound to this machine.
+	NotifyToken string `json:"notify_token,omitempty"`
 }
 
 // S3ConfigPath returns the per-user config file location following the XDG

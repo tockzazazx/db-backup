@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/punnawish/db-backup/internal/config"
+	"github.com/punnawish/db-backup/internal/notify"
 	"github.com/punnawish/db-backup/internal/s3"
 	"github.com/punnawish/db-backup/internal/schedule"
 )
@@ -44,6 +45,8 @@ func main() {
 		err = listCmd(os.Args[2:])
 	case "download":
 		err = downloadCmd(os.Args[2:])
+	case "test-email":
+		err = testEmailCmd()
 	case "schedule":
 		err = scheduleCmd(os.Args[2:])
 	default:
@@ -68,6 +71,8 @@ func configCmd(args []string) error {
 	ssl := fs.Bool("ssl", false, "use TLS (auto-detected when endpoint has an http:// or https:// scheme)")
 	folder := fs.String("folder", "", "folder (prefix) in the bucket for this machine's files, e.g. ubuntu-server-01")
 	paths := fs.String("paths", "", "comma-separated local directories to upload, e.g. /var/backups,/opt/data")
+	notifyTo := fs.String("notify-to", "", "comma-separated email recipients for backup notifications (empty = notifications off)")
+	notifyToken := fs.String("notify-token", "", "auth token for the email API (stored encrypted, bound to this machine)")
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: boxdb config --endpoint <host:port> --access <key> --secret <key> --bucket <name> [--ssl] [--folder <name>] [--paths <dir,dir>]")
 		fmt.Fprintln(os.Stderr, "       boxdb config          (show current config)")
@@ -112,6 +117,16 @@ func configCmd(args []string) error {
 	if *paths != "" {
 		cfg.Paths = splitPaths(*paths)
 	}
+	if *notifyTo != "" {
+		cfg.NotifyTo = splitPaths(*notifyTo)
+	}
+	if *notifyToken != "" {
+		enc, err := config.EncryptSecret(*notifyToken)
+		if err != nil {
+			return err
+		}
+		cfg.NotifyToken = enc
+	}
 
 	path, err := cfg.Save()
 	if err != nil {
@@ -135,6 +150,12 @@ func showConfig() error {
 	fmt.Println("  ssl      :", cfg.UseSSL)
 	fmt.Println("  folder   :", valueOr(cfg.Folder, "(not set)"))
 	fmt.Println("  paths    :", valueOr(strings.Join(cfg.Paths, ", "), "(not set)"))
+	fmt.Println("  notify to:", valueOr(strings.Join(cfg.NotifyTo, ", "), "(not set — notifications off)"))
+	token := "(not set — notifications off)"
+	if cfg.NotifyToken != "" {
+		token = "(set, encrypted)"
+	}
+	fmt.Println("  notify token:", token)
 	return nil
 }
 
@@ -193,8 +214,22 @@ func testCmd() error {
 
 // uploadCmd sweeps the configured local paths and uploads files that have
 // never been uploaded before into <folder>/<upload-date>/. Files that
-// disappeared locally are never deleted from the bucket.
+// disappeared locally are never deleted from the bucket. When notification
+// recipients and a token are configured, a summary email is sent afterwards
+// (also on failure); email problems never change the upload's outcome.
 func uploadCmd() error {
+	rep := notify.Report{Started: time.Now()}
+	if h, err := os.Hostname(); err == nil {
+		rep.Host = h
+	}
+	err := runUpload(&rep)
+	rep.Duration = time.Since(rep.Started)
+	rep.Err = err
+	notifyUpload(&rep)
+	return err
+}
+
+func runUpload(rep *notify.Report) error {
 	cfg, err := config.LoadS3()
 	if err != nil {
 		if errors.Is(err, config.ErrNoConfig) {
@@ -233,7 +268,7 @@ func uploadCmd() error {
 	}
 
 	dateFolder := time.Now().Format("2006-01-02")
-	var nUploaded, nSkipped int
+	rep.Dest = path.Join(cfg.Folder, dateFolder)
 	for _, dir := range cfg.Paths {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
@@ -247,25 +282,89 @@ func uploadCmd() error {
 			}
 			if uploaded[name] {
 				fmt.Printf("skip:   %s (already uploaded)\n", name)
-				nSkipped++
+				rep.Skipped++
 				continue
 			}
 			localPath := filepath.Join(dir, name)
 			key := path.Join(cfg.Folder, dateFolder, name)
-			size := ""
+			var fsize int64
 			if info, err := e.Info(); err == nil {
-				size = " (" + humanSize(info.Size()) + ")"
+				fsize = info.Size()
 			}
-			fmt.Printf("upload: %s -> %s%s\n", localPath, key, size)
+			fmt.Printf("upload: %s -> %s (%s)\n", localPath, key, humanSize(fsize))
 			if err := client.Upload(ctx, key, localPath); err != nil {
 				return err
 			}
 			uploaded[name] = true
-			nUploaded++
+			rep.Uploaded = append(rep.Uploaded, notify.File{Name: name, Size: fsize})
 		}
 	}
 
-	fmt.Printf("done: %d uploaded, %d skipped\n", nUploaded, nSkipped)
+	fmt.Printf("done: %d uploaded, %d skipped\n", len(rep.Uploaded), rep.Skipped)
+	return nil
+}
+
+// notifyUpload emails the run summary when notifications are configured.
+// Best effort by design: a notification problem must never change the
+// upload's outcome, so failures only print a warning.
+func notifyUpload(rep *notify.Report) {
+	cfg, err := config.LoadS3()
+	if err != nil || len(cfg.NotifyTo) == 0 || cfg.NotifyToken == "" {
+		return
+	}
+	token, err := config.DecryptSecret(cfg.NotifyToken)
+	if err != nil {
+		fmt.Printf("WARN: notification skipped: %v\n", err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := notify.Send(ctx, token, cfg.NotifyTo, rep.Subject(), rep.Content()); err != nil {
+		fmt.Printf("WARN: email notification failed: %v\n", err)
+		return
+	}
+	fmt.Println("notification sent to", strings.Join(cfg.NotifyTo, ", "))
+}
+
+// testEmailCmd sends a sample backup report through the email API so the
+// notify config can be verified without waiting for a real upload.
+func testEmailCmd() error {
+	cfg, err := config.LoadS3()
+	if err != nil {
+		return err
+	}
+	if len(cfg.NotifyTo) == 0 {
+		return errors.New("no notification recipients — set them with: boxdb config --notify-to a@x.com,b@y.com")
+	}
+	if cfg.NotifyToken == "" {
+		return errors.New("no notification token — set it with: boxdb config --notify-token <token>")
+	}
+	token, err := config.DecryptSecret(cfg.NotifyToken)
+	if err != nil {
+		return err
+	}
+
+	rep := notify.Report{
+		Dest:    path.Join(valueOr(cfg.Folder, "example-folder"), time.Now().Format("2006-01-02")),
+		Started: time.Now(),
+		Uploaded: []notify.File{
+			{Name: "example_db_20260716-030000.pgsql", Size: 300 * 1024},
+			{Name: "example_log.tar.gz", Size: 50 * 1024},
+		},
+		Skipped: 3,
+	}
+	if h, err := os.Hostname(); err == nil {
+		rep.Host = h
+	}
+	content := "(นี่คืออีเมลทดสอบจากคำสั่ง boxdb test-email — ข้อมูลด้านล่างเป็นตัวอย่าง)\n\n" + rep.Content()
+
+	fmt.Println("sending test email to:", strings.Join(cfg.NotifyTo, ", "))
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := notify.Send(ctx, token, cfg.NotifyTo, "[boxdb] ทดสอบการแจ้งเตือน - "+rep.Host, content); err != nil {
+		return err
+	}
+	fmt.Println("OK: test email sent")
 	return nil
 }
 
@@ -640,6 +739,7 @@ Usage:
   boxdb download <date>[/<file>] <dest-dir>
                         download one file or a whole date folder from S3;
                         existing names get a " (N)" suffix, never overwritten
+  boxdb test-email      send a sample notification email using the saved config
   boxdb schedule        show the auto-upload schedule
   boxdb schedule --daily <HH:MM>                    run every day (needs sudo)
   boxdb schedule --weekly <days> --at <HH:MM>       run on weekday(s), e.g. sat,sun
@@ -654,5 +754,7 @@ Config flags:
   --bucket <name>         bucket name
   --ssl                   use TLS
   --folder <name>         folder (prefix) in the bucket for this machine's files
-  --paths <dir,dir>       comma-separated local directories to upload`)
+  --paths <dir,dir>       comma-separated local directories to upload
+  --notify-to <a@x,b@y>   email recipients for backup notifications
+  --notify-token <token>  email API token (stored encrypted)`)
 }
