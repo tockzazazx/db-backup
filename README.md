@@ -68,6 +68,7 @@ boxdb list        # list date folders on S3
 boxdb list <date> # list files in one date folder
 boxdb download <date>[/<file>] <dest-dir>   # download from S3
 boxdb schedule    # show / install / remove the auto-upload schedule
+boxdb test-email  # send a sample notification email
 ```
 
 ## Upload
@@ -152,6 +153,27 @@ boxdb download 2026-07-08 /root/restore          # every file in that date folde
   together: `backup.tar.gz` → `backup (1).tar.gz`).
 - Files are downloaded to a temporary `.part` name and renamed only when
   complete, so a file with its final name is never half-written.
+
+## Email notifications
+
+After every `boxdb upload` (manual or scheduled), a summary email is sent
+through the team's email API when both settings below are present — leave
+either unset and notifications stay off:
+
+```sh
+boxdb config --notify-to a@x.com,b@y.com   # recipients (comma separated)
+boxdb config --notify-token <token>        # email API auth token
+boxdb test-email                           # verify by sending a sample email
+```
+
+- Failed uploads send an email too, with the error inside — a broken backup
+  is never silent.
+- A notification problem never changes the upload's outcome; it only prints
+  a warning.
+- The token is stored **encrypted** (AES-256-GCM, key derived from this
+  machine's `/etc/machine-id`): reading `config.json` does not reveal it,
+  and the file is useless on another machine — set the token again on each
+  machine, and after OS reinstalls.
 
 ## Scheduled uploads
 
